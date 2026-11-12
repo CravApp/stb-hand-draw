@@ -31,6 +31,7 @@ import com.stb.handdraw.hand.HandEngine
 import com.stb.handdraw.hand.HandModel
 import com.stb.handdraw.hand.UserHand
 import com.stb.handdraw.hand.handDrawPerfLine
+import com.stb.handdraw.hand.loadReportLine
 import com.stb.handdraw.hand.selectHand
 import com.stb.handdraw.input.KeyResult
 import com.stb.handdraw.input.RemoteCommand
@@ -52,9 +53,10 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
     private var colorIndex = 2
     private var thicknessIndex = 1
     private var model = HandModel.LITE
-    private var delegate = DelegateKind.CPU
+    private var delegate = DelegateKind.GPU
     private var numHands = 1
-    private var analysis = AnalysisSize.R640
+    private var analysis = AnalysisSize.R320
+    private var loaded = HandConfig(HandModel.LITE, DelegateKind.GPU, 1, AnalysisSize.R320)
     private var mirror = true
     private var settingsOpen = false
     private var settingIndex = 0
@@ -173,17 +175,16 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
         }
     }
 
-    override fun onReady(applied: HandConfig, requested: HandConfig) {
+    override fun onReady(applied: HandConfig, requested: HandConfig, loadError: String?) {
         if (isDestroyed) return
-        model = applied.model
-        delegate = applied.delegate
-        numHands = applied.numHands
-        savePrefs()
+        loaded = applied
         modelReady = true
-        if (requested.delegate == DelegateKind.GPU && applied.delegate == DelegateKind.CPU) {
-            showNotice(getString(R.string.notice_gpu_fallback))
-        } else if (requested.model != applied.model) {
-            showNotice(getString(R.string.notice_model_fallback))
+        Log.i(HAND_DRAW_PERF_TAG, loadReportLine(currentConfig(), applied, loadError))
+        when {
+            loadError != null && requested.model != applied.model ->
+                showNotice(getString(R.string.notice_model_fallback))
+            loadError != null && requested.delegate != applied.delegate ->
+                showNotice(getString(R.string.notice_gpu_fallback))
         }
         binding.statusText.text = getString(R.string.hud_searching)
         refreshHud()
@@ -192,8 +193,7 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
 
     override fun onGpuGaveUp() {
         if (isDestroyed) return
-        delegate = DelegateKind.CPU
-        savePrefs()
+        Log.i(HAND_DRAW_PERF_TAG, "load event=gpu_runtime_error fallback=CPU")
         showNotice(getString(R.string.notice_gpu_fallback))
     }
 
@@ -391,8 +391,8 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
         val configLine = getString(
             R.string.hud_config,
             if (hand == UserHand.RIGHT) getString(R.string.hand_right) else getString(R.string.hand_left),
-            model.logName,
-            delegate.logName,
+            loaded.model.logName,
+            loaded.delegate.logName,
             analysis.label,
             numHands,
         )
@@ -456,9 +456,12 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
             handDrawPerfLine(
                 fps = fps,
                 inferMs = sample?.inferMs ?: 0,
+                convertMs = sample?.convertMs ?: 0,
+                drawMs = binding.overlay.lastDrawMs,
                 frames = sample?.frames ?: 0,
-                model = model.logName,
-                delegate = delegate.logName,
+                model = loaded.model.logName,
+                requested = model.logName,
+                delegate = loaded.delegate.logName,
                 targetW = analysis.width,
                 targetH = analysis.height,
                 frameW = sample?.frameW ?: 0,
@@ -475,11 +478,25 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
         hand = if (prefs.getString(KEY_HAND, "right") == "left") UserHand.LEFT else UserHand.RIGHT
         colorIndex = prefs.getInt(KEY_COLOR, 2).coerceIn(0, colors.lastIndex)
         thicknessIndex = prefs.getInt(KEY_THICKNESS, 1).coerceIn(0, thicknessDp.lastIndex)
-        model = if (prefs.getString(KEY_MODEL, "lite") == "full") HandModel.FULL else HandModel.LITE
-        delegate = if (prefs.getString(KEY_DELEGATE, "cpu") == "gpu") DelegateKind.GPU else DelegateKind.CPU
         numHands = prefs.getInt(KEY_HANDS, 1).coerceIn(1, 2)
-        analysis = if (prefs.getString(KEY_RES, "640") == "320") AnalysisSize.R320 else AnalysisSize.R640
         mirror = prefs.getBoolean(KEY_MIRROR, true)
+        // La 1.x guardaba el modelo de respaldo (full/CPU/640) como si fuera la elección.
+        if (prefs.getInt(KEY_VERSION, 0) < PREFS_VERSION) {
+            model = HandModel.LITE
+            delegate = DelegateKind.GPU
+            analysis = AnalysisSize.R320
+            prefs.edit()
+                .putInt(KEY_VERSION, PREFS_VERSION)
+                .putString(KEY_MODEL, model.logName)
+                .putString(KEY_DELEGATE, delegate.logName.lowercase())
+                .putString(KEY_RES, "320")
+                .apply()
+        } else {
+            model = if (prefs.getString(KEY_MODEL, "lite") == "full") HandModel.FULL else HandModel.LITE
+            delegate = if (prefs.getString(KEY_DELEGATE, "gpu") == "cpu") DelegateKind.CPU else DelegateKind.GPU
+            analysis = if (prefs.getString(KEY_RES, "320") == "640") AnalysisSize.R640 else AnalysisSize.R320
+        }
+        loaded = currentConfig()
     }
 
     private fun savePrefs() {
@@ -492,6 +509,7 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
             .putInt(KEY_HANDS, numHands)
             .putString(KEY_RES, if (analysis == AnalysisSize.R320) "320" else "640")
             .putBoolean(KEY_MIRROR, mirror)
+            .putInt(KEY_VERSION, PREFS_VERSION)
             .apply()
     }
 
@@ -574,6 +592,8 @@ class MainActivity : AppCompatActivity(), HandEngine.Listener {
         const val KEY_HANDS = "hands"
         const val KEY_RES = "res"
         const val KEY_MIRROR = "mirror"
+        const val KEY_VERSION = "prefs_version"
+        const val PREFS_VERSION = 2
         const val SETTING_COUNT = 8
     }
 }

@@ -13,21 +13,23 @@ import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import com.stb.handdraw.draw.NormPoint
+import java.util.ArrayDeque
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.roundToInt
 
 /**
- * Hand Landmarker en LIVE_STREAM, un fotograma en vuelo.
- * La vista previa sigue en espejo; este bitmap no se voltea, y la mano se corrige en [userHandFromMediaPipe].
+ * Hand Landmarker en LIVE_STREAM.
+ * Hay dos bitmaps propios: uno puede convertirse mientras el otro está en la inferencia.
+ * Solo hay un detectAsync a la vez.
  */
 class HandEngine(
     context: Context,
     listener: Listener,
 ) {
     interface Listener {
-        fun onReady(applied: HandConfig, requested: HandConfig)
+        fun onReady(applied: HandConfig, requested: HandConfig, loadError: String?)
         fun onFatal(error: Throwable)
         fun onHands(frame: HandFrame)
         fun onGpuGaveUp()
@@ -43,10 +45,18 @@ class HandEngine(
     data class PerfSample(
         val fps: Int,
         val inferMs: Int,
+        val convertMs: Int,
         val frames: Int,
         val frameW: Int,
         val frameH: Int,
         val tracked: Int,
+    )
+
+    private class HeldFrame(
+        val bitmap: Bitmap,
+        val convertMs: Int,
+        val timestampNs: Long,
+        val poolGen: Int,
     )
 
     private val appContext = context.applicationContext
@@ -73,9 +83,17 @@ class HandEngine(
     private val gpuFallbackTicket = AtomicInteger(Int.MIN_VALUE)
     private var lastTimestampMs = Long.MIN_VALUE
 
+    private var poolGen = 0
+    private var poolW = 0
+    private var poolH = 0
+    private val freeFrames = ArrayDeque<Bitmap>(2)
+    private var inflightFrame: Bitmap? = null
+    private var inflightConvertMs = 0
+    private var pendingFrame: HeldFrame? = null
+
     private var statFrames = 0
     private var statInferSum = 0L
-    private var statLastInfer = 0
+    private var statConvertSum = 0L
     private var statFrameW = 0
     private var statFrameH = 0
     private var statTracked = 0
@@ -95,19 +113,22 @@ class HandEngine(
                     landmarker = opened.landmarker
                     applied = opened.config
                     inFlight.set(false)
+                    inflightFrame = null
+                    pendingFrame?.bitmap?.let { recycleIfCurrent(it, poolGen) }
+                    pendingFrame = null
                 }
+                val error = opened.loadError
                 Log.i(
-                    TAG,
-                    "Hand Landmarker listo modelo=${opened.config.model.logName} " +
-                        "delegado=${opened.config.delegate.logName} manos=${opened.config.numHands}",
+                    HAND_DRAW_PERF_TAG,
+                    loadReportLine(requested, opened.config, error),
                 )
                 mainHandler.post {
                     if (ticket == generation.get()) {
-                        listenerRef?.onReady(opened.config, requested)
+                        listenerRef?.onReady(opened.config, requested, error)
                     }
                 }
             } catch (error: Throwable) {
-                Log.e(TAG, "No se pudo crear el Hand Landmarker", error)
+                Log.e(HAND_DRAW_PERF_TAG, "load fail ${loadFailureLine(requested, error)}", error)
                 mainHandler.post {
                     if (ticket == generation.get()) listenerRef?.onFatal(error)
                 }
@@ -115,46 +136,49 @@ class HandEngine(
         }, "hand-init").start()
     }
 
-    fun canAcceptFrame(): Boolean {
-        if (closed || landmarker == null) return false
-        if (inFlight.get()) {
-            val elapsed = SystemClock.elapsedRealtime() - inFlightSince.get()
-            if (elapsed > STUCK_MS) {
-                inFlight.set(false)
-            } else {
-                return false
+    /** Bitmap reutilizable del tamaño de análisis. Null si los dos están ocupados. */
+    fun borrowFrame(width: Int, height: Int): Bitmap? {
+        if (width <= 0 || height <= 0) return null
+        synchronized(lock) {
+            if (closed) return null
+            if (width != poolW || height != poolH) {
+                poolGen += 1
+                poolW = width
+                poolH = height
+                freeFrames.clear()
             }
+            val ready = if (freeFrames.isEmpty()) null else freeFrames.remove()
+            if (ready != null) return ready
+            val busy = (if (inflightFrame != null) 1 else 0) + (if (pendingFrame != null) 1 else 0)
+            if (busy >= 2) return null
+            return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         }
-        return true
     }
 
-    fun submit(bitmap: Bitmap, timestampNs: Long): Boolean {
-        if (!canAcceptFrame()) return false
-        val timestampMs = nextTimestamp(timestampNs / 1_000_000L)
-        val image = try {
-            BitmapImageBuilder(bitmap).build()
-        } catch (error: Throwable) {
-            Log.e(TAG, "No se pudo envolver el fotograma", error)
-            return false
+    fun releaseFrame(bitmap: Bitmap) {
+        synchronized(lock) {
+            recycleIfCurrent(bitmap, poolGen)
         }
-        try {
-            synchronized(lock) {
-                val engine = landmarker
-                if (engine == null || closed) {
-                    image.close()
-                    return false
-                }
-                inFlight.set(true)
-                inFlightSince.set(SystemClock.elapsedRealtime())
-                engine.detectAsync(image, timestampMs)
+    }
+
+    /**
+     * Encola el bitmap ya relleno. Si la inferencia está libre, sale ya.
+     * Si no, queda pendiente y sustituye al pendiente anterior.
+     */
+    fun submitFrame(bitmap: Bitmap, timestampNs: Long, convertMs: Int) {
+        val launch = synchronized(lock) {
+            if (landmarker == null || closed) {
+                recycleIfCurrent(bitmap, poolGen)
+                return
             }
-            return true
-        } catch (error: Throwable) {
-            inFlight.set(false)
-            runCatching { image.close() }
-            Log.e(TAG, "detectAsync rechazó el fotograma", error)
-            return false
+            if (inFlight.get()) {
+                pendingFrame?.let { recycleIfCurrent(it.bitmap, it.poolGen) }
+                pendingFrame = HeldFrame(bitmap, convertMs, timestampNs, poolGen)
+                return
+            }
+            claim(bitmap, convertMs, timestampNs)
         }
+        dispatch(launch)
     }
 
     fun takeSample(): PerfSample {
@@ -162,11 +186,14 @@ class HandEngine(
         synchronized(statsLock) {
             if (statWindowStart == 0L) statWindowStart = now
             val elapsed = (now - statWindowStart).coerceAtLeast(1L)
-            val fps = (statFrames * 1000f / elapsed).roundToInt()
-            val infer = if (statFrames == 0) statLastInfer else (statInferSum / statFrames).toInt()
-            val sample = PerfSample(fps, infer, statFrames, statFrameW, statFrameH, statTracked)
+            val frames = statFrames
+            val fps = (frames * 1000f / elapsed).roundToInt()
+            val infer = if (frames == 0) 0 else (statInferSum / frames).toInt()
+            val convert = if (frames == 0) 0 else (statConvertSum / frames).toInt()
+            val sample = PerfSample(fps, infer, convert, frames, statFrameW, statFrameH, statTracked)
             statFrames = 0
             statInferSum = 0L
+            statConvertSum = 0L
             statWindowStart = now
             return sample
         }
@@ -179,21 +206,72 @@ class HandEngine(
             closed = true
             landmarker?.close()
             landmarker = null
+            freeFrames.forEach { it.recycle() }
+            freeFrames.clear()
+            inflightFrame = null
+            pendingFrame = null
         }
     }
 
+    private fun claim(bitmap: Bitmap, convertMs: Int, timestampNs: Long): Launch {
+        inflightFrame = bitmap
+        inflightConvertMs = convertMs
+        inFlight.set(true)
+        inFlightSince.set(SystemClock.elapsedRealtime())
+        val engine = landmarker ?: error("sin landmarker")
+        return Launch(engine, bitmap, timestampNs, generation.get())
+    }
+
+    private fun dispatch(launch: Launch) {
+        val timestampMs = synchronized(lock) { nextTimestampLocked(launch.timestampNs / 1_000_000L) }
+        val image = try {
+            BitmapImageBuilder(launch.bitmap).build()
+        } catch (error: Throwable) {
+            Log.e(HAND_DRAW_PERF_TAG, "No se pudo envolver el fotograma: ${error.message}", error)
+            synchronized(lock) { finishInflight(launch.ticket) }
+            return
+        }
+        try {
+            launch.engine.detectAsync(image, timestampMs)
+        } catch (error: Throwable) {
+            Log.e(HAND_DRAW_PERF_TAG, "detectAsync rechazó el fotograma: ${error.message}", error)
+            runCatching { image.close() }
+            synchronized(lock) { finishInflight(launch.ticket) }
+        }
+    }
+
+    private fun finishInflight(ticket: Int) {
+        if (ticket != generation.get()) {
+            inflightFrame?.recycle()
+            inflightFrame = null
+            return
+        }
+        inflightFrame?.let { recycleIfCurrent(it, poolGen) }
+        inflightFrame = null
+        inFlight.set(false)
+    }
+
+    private fun recycleIfCurrent(bitmap: Bitmap, gen: Int) {
+        if (gen != poolGen || bitmap.width != poolW || bitmap.height != poolH || bitmap.isRecycled) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            return
+        }
+        freeFrames.addLast(bitmap)
+    }
+
     private fun open(requested: HandConfig, ticket: Int): Opened {
+        val errors = ArrayList<String>(4)
         var last: Throwable? = null
         for (attempt in creationAttempts(requested)) {
             try {
-                return Opened(build(attempt, ticket), attempt)
+                val created = build(attempt, ticket)
+                val note = errors.joinToString(" | ").ifBlank { null }
+                return Opened(created, attempt, note)
             } catch (error: Throwable) {
                 last = error
-                Log.w(
-                    TAG,
-                    "Fallo al crear modelo=${attempt.model.logName} delegado=${attempt.delegate.logName}",
-                    error,
-                )
+                val line = loadFailureLine(attempt, error)
+                errors += line
+                Log.e(HAND_DRAW_PERF_TAG, "load fail $line", error)
             }
         }
         throw last ?: IllegalStateException("No se pudo crear el Hand Landmarker")
@@ -216,16 +294,37 @@ class HandEngine(
             .setResultListener { result, image ->
                 val width = image.width
                 val height = image.height
+                val inferMs = (SystemClock.elapsedRealtime() - inFlightSince.get()).toInt().coerceAtLeast(0)
+                val convertMs = synchronized(lock) { inflightConvertMs }
                 try {
-                    if (ticket == generation.get()) deliver(result, width, height)
+                    if (ticket == generation.get()) deliver(result, width, height, inferMs, convertMs)
                 } finally {
                     runCatching { image.close() }
-                    if (ticket == generation.get()) inFlight.set(false)
+                    var follow: Launch? = null
+                    synchronized(lock) {
+                        if (ticket == generation.get()) {
+                            finishInflight(ticket)
+                            val next = pendingFrame
+                            pendingFrame = null
+                            if (next != null && landmarker != null && !closed) {
+                                follow = claim(next.bitmap, next.convertMs, next.timestampNs)
+                            }
+                        } else {
+                            finishInflight(ticket)
+                        }
+                    }
+                    follow?.let { dispatch(it) }
                 }
             }
             .setErrorListener { error ->
-                if (ticket == generation.get()) inFlight.set(false)
-                Log.e(TAG, "Fallo en la detección de manos", error)
+                Log.e(HAND_DRAW_PERF_TAG, "inferencia ${config.model.logName}/${config.delegate.logName}: ${error.message}", error)
+                synchronized(lock) {
+                    if (ticket == generation.get()) {
+                        finishInflight(ticket)
+                        pendingFrame?.let { recycleIfCurrent(it.bitmap, it.poolGen) }
+                        pendingFrame = null
+                    }
+                }
                 if (config.delegate == DelegateKind.GPU && gpuFallbackTicket.get() != ticket) {
                     gpuFallbackTicket.set(ticket)
                     val cpu = config.copy(delegate = DelegateKind.CPU)
@@ -240,13 +339,18 @@ class HandEngine(
         return HandLandmarker.createFromOptions(appContext, options)
     }
 
-    private fun deliver(result: HandLandmarkerResult, width: Int, height: Int) {
-        val started = inFlightSince.get()
-        val inferMs = (SystemClock.elapsedRealtime() - started).toInt().coerceAtLeast(0)
+    private fun deliver(
+        result: HandLandmarkerResult,
+        width: Int,
+        height: Int,
+        inferMs: Int,
+        convertMs: Int,
+    ) {
         val hands = readHands(result)
-        record(inferMs, width, height, hands.size)
-        val frame = HandFrame(width, height, hands, inferMs)
-        mainHandler.post { listenerRef?.onHands(frame) }
+        record(inferMs, convertMs, width, height, hands.size)
+        mainHandler.post {
+            listenerRef?.onHands(HandFrame(width, height, hands, inferMs))
+        }
     }
 
     private fun readHands(result: HandLandmarkerResult): List<DetectedHand> {
@@ -274,30 +378,34 @@ class HandEngine(
         return out
     }
 
-    private fun record(inferMs: Int, width: Int, height: Int, tracked: Int) {
+    private fun record(inferMs: Int, convertMs: Int, width: Int, height: Int, tracked: Int) {
         synchronized(statsLock) {
             if (statWindowStart == 0L) statWindowStart = SystemClock.elapsedRealtime()
             statFrames += 1
             statInferSum += inferMs
-            statLastInfer = inferMs
+            statConvertSum += convertMs
             statFrameW = width
             statFrameH = height
             statTracked = tracked
         }
     }
 
-    private fun nextTimestamp(candidate: Long): Long {
-        synchronized(lock) {
-            val timestamp = if (candidate > lastTimestampMs) candidate else lastTimestampMs + 1L
-            lastTimestampMs = timestamp
-            return timestamp
-        }
+    private fun nextTimestampLocked(candidate: Long): Long {
+        val timestamp = if (candidate > lastTimestampMs) candidate else lastTimestampMs + 1L
+        lastTimestampMs = timestamp
+        return timestamp
     }
 
-    private data class Opened(val landmarker: HandLandmarker, val config: HandConfig)
+    private data class Opened(
+        val landmarker: HandLandmarker,
+        val config: HandConfig,
+        val loadError: String?,
+    )
 
-    private companion object {
-        const val TAG = "HandDraw"
-        const val STUCK_MS = 2000L
-    }
+    private data class Launch(
+        val engine: HandLandmarker,
+        val bitmap: Bitmap,
+        val timestampNs: Long,
+        val ticket: Int,
+    )
 }

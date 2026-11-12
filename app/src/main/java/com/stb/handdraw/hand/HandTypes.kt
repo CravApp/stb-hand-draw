@@ -37,19 +37,28 @@ data class HandConfig(
 )
 
 /**
- * Orden de arranque. La GPU de este Mali-G31 puede fallar; el modelo lite es un
- * empaquetado propio y, si no carga, se prueba el full oficial en CPU.
+ * Si lite no arranca se prueba el full con el mismo delegado. La GPU va antes
+ * que la CPU: en este Mali-G31 la GPU sí corre y es más rápida.
  */
 fun creationAttempts(requested: HandConfig): List<HandConfig> {
     val out = LinkedHashSet<HandConfig>()
     out.add(requested)
+    if (requested.model == HandModel.LITE) {
+        out.add(requested.copy(model = HandModel.FULL))
+    }
     if (requested.delegate == DelegateKind.GPU) {
         out.add(requested.copy(delegate = DelegateKind.CPU))
-    }
-    if (requested.model == HandModel.LITE) {
-        out.add(requested.copy(model = HandModel.FULL, delegate = DelegateKind.CPU))
+        if (requested.model == HandModel.LITE) {
+            out.add(requested.copy(model = HandModel.FULL, delegate = DelegateKind.CPU))
+        }
     }
     return out.toList()
+}
+
+fun loadFailureLine(config: HandConfig, error: Throwable): String {
+    val detail = error.message?.lineSequence()?.firstOrNull()?.take(180)?.ifBlank { null }
+        ?: error.javaClass.simpleName
+    return "${config.model.logName}/${config.delegate.logName}: ${error.javaClass.simpleName}: $detail"
 }
 
 data class DetectedHand(
@@ -94,8 +103,11 @@ const val ANALYSIS_FRAME_IS_MIRRORED = false
 fun handDrawPerfLine(
     fps: Int,
     inferMs: Int,
+    convertMs: Int,
+    drawMs: Int,
     frames: Int,
     model: String,
+    requested: String,
     delegate: String,
     targetW: Int,
     targetH: Int,
@@ -104,7 +116,12 @@ fun handDrawPerfLine(
     hands: Int,
     tracked: Int,
 ): String =
-    "fps=$fps inferMs=$inferMs frames=$frames model=$model delegate=$delegate " +
+    "fps=$fps inferMs=$inferMs convertMs=$convertMs drawMs=$drawMs frames=$frames " +
+        "model=$model requested=$requested delegate=$delegate " +
         "target=${targetW}x$targetH frame=${frameW}x$frameH hands=$hands tracked=$tracked"
+
+fun loadReportLine(requested: HandConfig, loaded: HandConfig, error: String?): String =
+    "load requested=${requested.model.logName}/${requested.delegate.logName} " +
+        "loaded=${loaded.model.logName}/${loaded.delegate.logName} error=${error ?: "none"}"
 
 const val HAND_DRAW_PERF_TAG = "HandDrawPerf"

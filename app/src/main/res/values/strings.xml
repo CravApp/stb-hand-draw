@@ -41,5 +41,5 @@
     <string name="btn_clear">Borrar</string>
     <string name="btn_cancel">Cancelar</string>
     <string name="notice_gpu_fallback">GPU no disponible. Se usa CPU.</string>
-    <string name="notice_model_fallback">El modelo pedido no arrancó. Se usa otra combinación.</string>
+    <string name="notice_model_fallback">El modelo pedido no arrancó. Mira logcat HandDrawPerf.</string>
 </resources>

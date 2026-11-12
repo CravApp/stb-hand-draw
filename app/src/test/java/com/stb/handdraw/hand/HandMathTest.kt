@@ -54,6 +54,7 @@ class HandMathTest {
         assertEquals(
             listOf(
                 HandConfig(HandModel.LITE, DelegateKind.GPU, 1, AnalysisSize.R640),
+                HandConfig(HandModel.FULL, DelegateKind.GPU, 1, AnalysisSize.R640),
                 HandConfig(HandModel.LITE, DelegateKind.CPU, 1, AnalysisSize.R640),
                 HandConfig(HandModel.FULL, DelegateKind.CPU, 1, AnalysisSize.R640),
             ),
@@ -71,19 +72,22 @@ class HandMathTest {
     fun perfLineIsStableForAdb() {
         val line = handDrawPerfLine(
             fps = 7,
-            inferMs = 140,
+            inferMs = 79,
+            convertMs = 8,
+            drawMs = 1,
             frames = 7,
             model = "lite",
-            delegate = "CPU",
-            targetW = 640,
-            targetH = 480,
+            requested = "lite",
+            delegate = "GPU",
+            targetW = 320,
+            targetH = 240,
             frameW = 320,
             frameH = 240,
             hands = 1,
             tracked = 1,
         )
         assertEquals(
-            "fps=7 inferMs=140 frames=7 model=lite delegate=CPU target=640x480 frame=320x240 hands=1 tracked=1",
+            "fps=7 inferMs=79 convertMs=8 drawMs=1 frames=7 model=lite requested=lite delegate=GPU target=320x240 frame=320x240 hands=1 tracked=1",
             line,
         )
         assertTrue(HAND_DRAW_PERF_TAG == "HandDrawPerf")

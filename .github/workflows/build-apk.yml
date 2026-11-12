@@ -33,7 +33,11 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
           mkdir -p "$ANDROID_HOME/cmdline-tools"
-          curl -fsSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          # HTTP/2 a veces corta la descarga con curl 92. Reintenta y, si sigue, baja por HTTP/1.1.
+          url="https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          if ! curl --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/cmdtools.zip "$url"; then
+            curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/cmdtools.zip "$url"
+          fi
           rm -rf /tmp/cmdtools
           unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
           rm -rf "$ANDROID_HOME/cmdline-tools/latest"

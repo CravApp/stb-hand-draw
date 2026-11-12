@@ -10,7 +10,7 @@ En el decodificador, la app de pose midió unos 7 FPS en CPU. Esta app vuelve a 
 
 El APK lleva **solo `armeabi-v7a`**. En este decodificador no existe `lib64`. Se usa MediaPipe Tasks Vision **1.2.3** porque `tasks-core` de esa versión incluye `libmediapipe_tasks_jni.so` en 32 bits, y ese `.so` contiene el grafo `HandLandmarkerGraph`. La 0.10.26 de `tasks-vision` es solo arm64 y no sirve. La integración continua rechaza el APK si aparece otra ABI o si falta esa biblioteca.
 
-Google no publica un `hand_landmarker_lite.task`. El modelo **lite** de esta app empaqueta los gráficos oficiales `palm_detection_lite.tflite` y `hand_landmark_lite.tflite` (mismos tensores de entrada y salida que el full) y les copia los metadatos del paquete full, que el grafo de la 1.2.3 necesita para normalizar la imagen. El **full** es el `hand_landmarker.task` float16 revisión 1, descargado en la compilación y comprobado por SHA-256. El valor por defecto es lite, 1 mano, CPU y análisis 640×480, para poder comparar con la pose y luego bajar a 320×240.
+Google no publica un `hand_landmarker_lite.task`. El modelo **lite** de esta app empaqueta los gráficos oficiales `palm_detection_lite.tflite` y `hand_landmark_lite.tflite` (mismos tensores de entrada y salida que el full) y les copia los metadatos del paquete full, que el grafo de la 1.2.3 necesita para normalizar la imagen. El **full** es el `hand_landmarker.task` float16 revisión 1, descargado en la compilación y comprobado por SHA-256. El paquete lite está alineado a 4 bytes, que es lo que MediaPipe necesita para leer el `.task`. El valor por defecto es lite, GPU, 1 mano y análisis 320×240. Si el lite o la GPU no arrancan se prueba otra combinación, pero esa sustitución no se guarda: en logcat `requested` es lo pedido y `model` es lo que quedó cargado.
 
 ## Descargar e instalar
 
@@ -42,10 +42,10 @@ adb logcat -s HandDrawPerf
 Una línea típica:
 
 ```text
-fps=7 inferMs=140 frames=7 model=lite delegate=CPU target=640x480 frame=640x480 hands=1 tracked=1
+fps=15 inferMs=60 convertMs=4 drawMs=1 frames=15 model=lite requested=lite delegate=GPU target=320x240 frame=320x240 hands=1 tracked=1
 ```
 
-`fps` son resultados de inferencia en esa ventana de un segundo. `inferMs` es la media de esos fotogramas (o el último, si en ese segundo no hubo ninguno). `frame` es el bitmap que entró al modelo; si el HAL no entrega 320×240, la app lo reduce. En pantalla, los FPS y los milisegundos van grandes, arriba a la izquierda.
+`fps` son resultados de inferencia en esa ventana. `inferMs` es la media de la inferencia, `convertMs` la de copiar el fotograma RGBA al bitmap reutilizado y `drawMs` la del último dibujo. Si en ese segundo no hubo resultados, esos tiempos van a 0. `model` es el que quedó cargado; `requested` es el que pediste. Al arrancar, y si un modelo falla, hay otra línea `load requested=... loaded=... error=...` con el mismo tag. `frame` es el bitmap que entró al modelo. La vista previa sigue en 640×480. En pantalla, los FPS y los milisegundos de inferencia van grandes, arriba a la izquierda.
 
 ## Mando
 
@@ -106,7 +106,7 @@ Ese release necesita que el token de Actions pueda escribir contenidos. Si el jo
 - La CI no tiene el decodificador y no mide FPS. El número sale de `HandDrawPerf` en el equipo.
 - El delegado GPU del Mali-G31 puede fallar al crear el grafo o en el primer fotograma. Si falla, la app pasa a CPU y lo dice en pantalla.
 - Con `manos = 1`, MediaPipe puede seguir la mano que no está elegida. Sube a 2 si pasa.
-- El modelo lite no es un archivo oficial de Google. Si no arranca, la app carga el full en CPU.
+- El modelo lite no es un archivo oficial de Google. Si no arranca, la app carga el full con el mismo delegado y lo escribe en `HandDrawPerf` (`load ... error=`). La tecla 4 vuelve a pedir lite.
 - La vista previa sigue en 640×480. El análisis puede ser 320×240. Si los dos recortes de la cámara no coinciden, el trazo puede desplazarse un poco. La proyección es letterbox y respeta el espejo.
 - MediaPipe etiqueta la mano como si la imagen fuera un selfie. El bitmap de análisis no está espejado, así que la app invierte la etiqueta. Si el HAL ya entregara la imagen en espejo, Diestro y Zurdo quedarían cruzados; el ajuste sigue eligiendo una mano de forma estable.
 - El APK es de depuración, no un paquete de tienda.

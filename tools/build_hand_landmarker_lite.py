@@ -19,7 +19,7 @@ handedness.txt), se copian de los .tflite que hay dentro de:
 Los dos .tflite resultantes se guardan sin compresión como hand_detector.tflite
 y hand_landmarks_detector.tflite. El archivo del repositorio debe tener SHA-256
 
-  d40f91342b5bcd27300529ba26476b248bf6ff3570fb28ff9e10bd8256b5dc43
+  7eade15cb07478ae0077533d1a191be5023e32ff04338e2c574e8023f902626f
 
 La compilación de Gradle comprueba ese resumen. Para regenerar hace falta
 flatc y los módulos schema_generated / metadata_schema_generated en PYTHONPATH;
@@ -30,7 +30,7 @@ import hashlib
 import pathlib
 import sys
 
-EXPECTED = "d40f91342b5bcd27300529ba26476b248bf6ff3570fb28ff9e10bd8256b5dc43"
+EXPECTED = "7eade15cb07478ae0077533d1a191be5023e32ff04338e2c574e8023f902626f"
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TARGET = ROOT / "models" / "hand_landmarker_lite.task"
 

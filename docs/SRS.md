@@ -85,8 +85,8 @@ Una persona delante de la webcam, con un mando de televisor. Quien mide el rendi
 - El modelo full (`hand_landmarker.task`, SHA-256 `fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1`) se descarga al compilar.
 - El modelo lite (SHA-256 `d40f91342b5bcd27300529ba26476b248bf6ff3570fb28ff9e10bd8256b5dc43`) está en el repositorio. No existe un lite oficial; se construye con `palm_detection_lite.tflite` y `hand_landmark_lite.tflite`, que tienen las mismas formas de tensor que el full, más los metadatos de normalización del paquete full.
 - El bitmap de análisis no está espejado. MediaPipe asume un selfie, así que la etiqueta de mano se invierte. La vista previa sí se espeja con `scaleX`, y los trazos usan la misma proyección letterbox que la app de máscaras.
-- Hay como máximo un fotograma de inferencia en vuelo.
-- La GPU puede no estar disponible. El valor por defecto es CPU.
+- Hay como máximo un `detectAsync` a la vez. El fotograma siguiente puede convertirse mientras ese corre.
+- El valor por defecto es modelo lite, delegado GPU y análisis 320×240. Si no arranca, se prueba el full con el mismo delegado y después la CPU. Esa sustitución no se guarda como preferencia.
 
 ## 3. Requisitos específicos
 
@@ -109,7 +109,7 @@ Una persona delante de la webcam, con un mando de televisor. Quien mide el rendi
 | RF-01 | La actividad responde a `MAIN` + `LAUNCHER` y a `MAIN` + `LEANBACK_LAUNCHER`, con banner e icono, en horizontal y en español. |
 | RF-02 | Sin permiso de cámara, se explica el uso y se puede pedir. Si se niega, la app no se cierra por una excepción y ofrece reintentar o abrir los ajustes. |
 | RF-03 | Si no hay cámara o CameraX no puede enlazarla, hay un aviso y se puede reintentar. Si existe cámara frontal, se usa esa. |
-| RF-04 | El detector es Hand Landmarker en `LIVE_STREAM`. El número de manos es 1 o 2 (por defecto 1). El modelo es lite o full (por defecto lite). El delegado es CPU o GPU (por defecto CPU). |
+| RF-04 | El detector es Hand Landmarker en `LIVE_STREAM`. El número de manos es 1 o 2 (por defecto 1). El modelo es lite o full (por defecto lite). El delegado es CPU o GPU (por defecto GPU). El análisis por defecto es 320×240. |
 | RF-05 | Si crear el grafo en GPU falla, o el primer error de ejecución es de GPU, se reintenta en CPU y se avisa. Si el lite no carga, se reintenta el full en CPU. |
 | RF-06 | Solo la mano elegida dibuja. La etiqueta usa la handedness de MediaPipe corregida porque el fotograma de análisis no está espejado. Si hay dos manos de la preferida, gana la de mayor puntuación. |
 | RF-07 | Con OK (o Enter) pulsado, la yema del índice añade puntos suavizados al trazo. Soltar cierra el trazo. Una repetición de tecla no abre un segundo trazo. |
@@ -117,7 +117,7 @@ Una persona delante de la webcam, con un mando de televisor. Quien mide el rendi
 | RF-09 | Los trazos se guardan en coordenadas del fotograma y se dibujan en pantalla con letterbox y el mismo espejo que la vista previa. |
 | RF-10 | ↑ deshace el trazo en curso o, si no hay, el último cerrado. ↓ borra todos. Atrás corto pide confirmación si hay tinta. |
 | RF-11 | Se puede cambiar color, grosor, modelo, manos, delegado, resolución de análisis y espejo. Mano, color, grosor, modelo, delegado, manos, resolución y espejo se recuerdan. |
-| RF-12 | Los FPS y los milisegundos se muestran en pantalla. Cada segundo se escribe la línea `HandDrawPerf`. |
+| RF-12 | Los FPS y los milisegundos de inferencia se muestran en pantalla. Cada segundo `HandDrawPerf` escribe fps, inferMs, convertMs y drawMs, con el modelo cargado y el pedido. Un fallo al cargar el modelo se escribe en el mismo tag con `load` y `error`. |
 | RF-13 | El APK contiene únicamente `lib/armeabi-v7a`, con `libmediapipe_tasks_jni.so` de 32 bits, y los dos modelos. |
 
 ### 3.3 Requisitos no funcionales

@@ -1,6 +1,6 @@
 package com.stb.handdraw.camera
 
-import android.graphics.Bitmap
+import android.os.SystemClock
 import android.util.Log
 import android.util.Size
 import android.view.Surface
@@ -37,6 +37,8 @@ class CameraController(
 
     private var provider: ProcessCameraProvider? = null
     private var startGeneration = 0
+    private val writer = FrameWriter()
+    private var useRgba = true
 
     fun start() {
         val generation = ++startGeneration
@@ -85,33 +87,57 @@ class CameraController(
             .build()
             .also { it.setSurfaceProvider(previewView.surfaceProvider) }
         val target = analysisSize()
+        val analysis = analysisUseCase(target, rotation, useRgba)
+        try {
+            cameraProvider.unbindAll()
+            cameraProvider.bindToLifecycle(owner, selector, preview, analysis)
+            Log.i(
+                TAG,
+                "Cámara enlazada, análisis ${target.width}x${target.height} rgba=$useRgba",
+            )
+        } catch (error: Throwable) {
+            if (useRgba) {
+                useRgba = false
+                Log.w(TAG, "RGBA_8888 no enlazó; se usa YUV", error)
+                bind(cameraProvider)
+                return
+            }
+            Log.e(TAG, "bindToLifecycle falló", error)
+            onUnavailable(Unavailable.BUSY)
+        }
+    }
+
+    private fun analysisUseCase(target: Size, rotation: Int, rgba: Boolean): ImageAnalysis {
+        val format = if (rgba) {
+            ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888
+        } else {
+            ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888
+        }
         val analysis = ImageAnalysis.Builder()
             .setResolutionSelector(resolution(target))
             .setTargetRotation(rotation)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+            .setOutputImageFormat(format)
             .build()
         analysis.setAnalyzer(analysisExecutor) { image ->
+            val started = SystemClock.elapsedRealtime()
+            var borrowed: android.graphics.Bitmap? = null
             try {
-                val engine = engineProvider()
-                if (engine == null || !engine.canAcceptFrame()) return@setAnalyzer
-                val bitmap = limitBitmap(image.toBitmapCompat(), target.width, target.height)
-                val accepted = engine.submit(bitmap, image.imageInfo.timestamp)
-                if (!accepted && !bitmap.isRecycled) bitmap.recycle()
+                val engine = engineProvider() ?: return@setAnalyzer
+                val bitmap = engine.borrowFrame(target.width, target.height) ?: return@setAnalyzer
+                borrowed = bitmap
+                writer.write(image, bitmap)
+                val convertMs = (SystemClock.elapsedRealtime() - started).toInt()
+                engine.submitFrame(bitmap, image.imageInfo.timestamp, convertMs)
+                borrowed = null
             } catch (error: Throwable) {
+                borrowed?.let { engineProvider()?.releaseFrame(it) }
                 Log.e(TAG, "No se pudo leer un fotograma", error)
             } finally {
                 image.close()
             }
         }
-        try {
-            cameraProvider.unbindAll()
-            cameraProvider.bindToLifecycle(owner, selector, preview, analysis)
-            Log.i(TAG, "Cámara enlazada, análisis ${target.width}x${target.height}")
-        } catch (error: Throwable) {
-            Log.e(TAG, "bindToLifecycle falló", error)
-            onUnavailable(Unavailable.BUSY)
-        }
+        return analysis
     }
 
     private fun choose(cameraProvider: ProcessCameraProvider): CameraSelector {

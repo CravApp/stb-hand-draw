@@ -12,7 +12,7 @@ plugins {
 val handFullUrl =
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
 val handFullSha256 = "fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1"
-val handLiteSha256 = "d40f91342b5bcd27300529ba26476b248bf6ff3570fb28ff9e10bd8256b5dc43"
+val handLiteSha256 = "7eade15cb07478ae0077533d1a191be5023e32ff04338e2c574e8023f902626f"
 val handAssetDir = layout.buildDirectory.dir("generated/handAssets")
 
 android {

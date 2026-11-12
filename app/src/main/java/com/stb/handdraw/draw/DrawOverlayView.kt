@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
 
@@ -43,13 +44,21 @@ class DrawOverlayView @JvmOverloads constructor(
     private val path = Path()
     private val density = resources.displayMetrics.density
 
+    @Volatile
+    var lastDrawMs: Int = 0
+        private set
+
     fun refresh() {
         invalidate()
     }
 
     override fun onDraw(canvas: Canvas) {
+        val started = SystemClock.elapsedRealtime()
         super.onDraw(canvas)
-        if (width == 0 || height == 0 || imageWidth <= 0 || imageHeight <= 0) return
+        if (width == 0 || height == 0 || imageWidth <= 0 || imageHeight <= 0) {
+            lastDrawMs = (SystemClock.elapsedRealtime() - started).toInt()
+            return
+        }
         val mapping = FrameMapping(
             viewWidth = width.toFloat(),
             viewHeight = height.toFloat(),
@@ -78,6 +87,7 @@ class DrawOverlayView @JvmOverloads constructor(
         cursorPaint.color = cursorColor
         val radius = if (drawing) 14f * density else 10f * density
         canvas.drawCircle(view.x, view.y, radius, cursorPaint)
+        lastDrawMs = (SystemClock.elapsedRealtime() - started).toInt()
     }
 
     private fun drawStroke(canvas: Canvas, mapping: FrameMapping, stroke: Stroke) {

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Dibujo al aire</string>
+    <string name="preview_desc">Vista de la cámara</string>
+    <string name="hud_fps">%1$d FPS</string>
+    <string name="hud_fps_unknown">— FPS</string>
+    <string name="hud_infer">%1$d ms</string>
+    <string name="hud_infer_unknown">— ms</string>
+    <string name="hud_loading">Cargando modelo…</string>
+    <string name="hud_searching">Buscando mano…</string>
+    <string name="hud_tracking">Mano %1$s</string>
+    <string name="hud_other_hand">Se ve la otra mano</string>
+    <string name="hud_drawing">Dibujando</string>
+    <string name="hud_hint">OK dibuja · ← mano · → color · ↑ deshacer · ↓ borrar · ← largo ajustes</string>
+    <string name="hud_config">%1$s · %2$s · %3$s · %4$s · %5$d mano(s)</string>
+    <string name="settings_title">Ajustes y ayuda</string>
+    <string name="set_hand">Mano: %1$s</string>
+    <string name="set_color">Color: %1$s</string>
+    <string name="set_thickness">Grosor: %1$s</string>
+    <string name="set_model">Modelo: %1$s</string>
+    <string name="set_hands">Manos a buscar: %1$d</string>
+    <string name="set_delegate">Delegado: %1$s</string>
+    <string name="set_resolution">Análisis: %1$s</string>
+    <string name="set_mirror">Espejo: %1$s</string>
+    <string name="mirror_on">sí</string>
+    <string name="mirror_off">no</string>
+    <string name="hand_right">Diestro</string>
+    <string name="hand_left">Zurdo</string>
+    <string name="detected_right">derecha</string>
+    <string name="detected_left">izquierda</string>
+    <string name="help_body">OK mantener: dibujar con la yema del índice.\nOK soltar: terminar el trazo.\n← : Diestro / Zurdo.\n← mantener: abrir estos ajustes.\n→ : siguiente color.\n→ mantener: siguiente grosor.\n↑ : deshacer el último trazo.\n↓ : borrar todos los trazos.\nAtrás: preguntar antes de borrar, o salir si no hay trazos.\nAtrás mantener: salir.\nMenú, Info o 0: abrir o cerrar ajustes.\nEn ajustes: ↑↓ elige, ←→ cambia, OK cambia, Atrás cierra.\n1 Diestro, 2 Zurdo, 3 grosor, 4 modelo, 5 CPU/GPU, 6 resolución, 7 número de manos, 8 espejo, 9 color.\nRojo: resolución. Verde: delegado. Amarillo: grosor. Azul: modelo.\nReproducir: número de manos. Borrar o rebobinar: deshacer. Stop: borrar todo.</string>
+    <string name="msg_need_permission">La app necesita la cámara para ver la mano y dibujar en el aire. La imagen se procesa en el dispositivo y no se envía a ningún sitio.</string>
+    <string name="btn_allow_camera">Permitir cámara</string>
+    <string name="msg_permission_denied">Permiso de cámara denegado. Sin la cámara no se puede seguir el dedo.</string>
+    <string name="btn_retry">Reintentar</string>
+    <string name="btn_settings">Abrir ajustes</string>
+    <string name="msg_no_camera">No se detectó ninguna cámara. Conecta una webcam UVC y pulsa reintentar.</string>
+    <string name="msg_camera_error">No se pudo abrir la cámara. Comprueba que otra aplicación no la esté usando.</string>
+    <string name="msg_model_error">No se pudo cargar el detector de manos.</string>
+    <string name="msg_confirm_clear">¿Borrar todos los trazos?</string>
+    <string name="btn_clear">Borrar</string>
+    <string name="btn_cancel">Cancelar</string>
+    <string name="notice_gpu_fallback">GPU no disponible. Se usa CPU.</string>
+    <string name="notice_model_fallback">El modelo pedido no arrancó. Se usa otra combinación.</string>
+</resources>

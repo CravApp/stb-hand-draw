@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="accent">#FF1AA6C7</color>
+    <color name="hud_text">#FFF4F7FB</color>
+    <color name="hud_muted">#FFC5D0DE</color>
+    <color name="fps">#FFB6FF7A</color>
+    <color name="infer">#FF9CDBFF</color>
+</resources>

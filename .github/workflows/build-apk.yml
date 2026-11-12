@@ -1,0 +1,111 @@
+name: Compilar APK
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: apk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Ensamblar y verificar ABI
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@v5
+
+      - name: Configurar JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Instalar Android SDK 34
+        run: |
+          set -euo pipefail
+          ANDROID_HOME="$HOME/android-sdk"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -fsSL -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf /tmp/cmdtools
+          unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools
+          rm -rf "$ANDROID_HOME/cmdline-tools/latest"
+          mv /tmp/cmdtools/cmdline-tools "$ANDROID_HOME/cmdline-tools/latest"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_HOME" \
+            "platforms;android-34" "build-tools;34.0.0" "platform-tools"
+
+      - name: Configurar Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Probar y compilar
+        run: ./gradlew :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Verificar que el APK es solo armeabi-v7a
+        run: bash tools/verify_apk_abi.sh app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Subir APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-armeabi-v7a
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publicar APK en el release latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Obtener el código
+        uses: actions/checkout@v5
+
+      - name: Descargar APK
+        uses: actions/download-artifact@v4
+        with:
+          name: app-debug-armeabi-v7a
+          path: dist
+
+      - name: Publicar release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cp dist/app-debug.apk app-debug.apk
+          NOTES_FILE=$(mktemp)
+          cat > "$NOTES_FILE" <<EOF
+          Compilación de depuración armeabi-v7a (solo 32 bits) para el decodificador Android TV.
+
+          - Commit: ${GITHUB_SHA}
+          - Ejecución: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Instalación: adb install -r app-debug.apk
+
+          La firma de depuración es estable (keystore del repositorio), así que -r sustituye la versión anterior.
+          EOF
+          TITLE="Dibujo al aire (armeabi-v7a)"
+          REPO="$GITHUB_REPOSITORY"
+          if gh release view latest --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload latest app-debug.apk --clobber --repo "$REPO"
+            gh release edit latest --repo "$REPO" --target "${GITHUB_SHA}" --title "$TITLE" --notes-file "$NOTES_FILE"
+          else
+            gh release create latest \
+              --repo "$REPO" \
+              --target "${GITHUB_SHA}" \
+              --title "$TITLE" \
+              --notes-file "$NOTES_FILE" \
+              app-debug.apk
+          fi
+          echo "Descarga directa: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/latest/app-debug.apk"
